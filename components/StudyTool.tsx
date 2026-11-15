@@ -18,7 +18,9 @@ export interface DiseaseItem {
 
 export interface StudyNode {
   id: string;
-  parent: string | null;
+  parent?: string | null;
+  parents?: string[];
+  isInhibitor?: boolean;
   top: number;
   left: number;
   width: string;
@@ -31,7 +33,7 @@ export interface StudyNode {
   diseases?: DiseaseItem[];
 }
 
-const DIAGRAM_WIDTH = 1100;
+const DIAGRAM_WIDTH = 1150;
 const DIAGRAM_HEIGHT = 720;
 
 const uiText = {
@@ -40,7 +42,7 @@ const uiText = {
     en: "Pathophysiology Interactive Study Platform (Ch. 16.1 & 16.2)",
   },
   tabs: {
-    lineage: { ka: "ინტერაქტიული დიაგრამები (3)", en: "Interactive Diagrams (3)" },
+    lineage: { ka: "ინტერაქტიული დიაგრამები (5)", en: "Interactive Diagrams (5)" },
     theory: { ka: "თეორია და ცხრილები", en: "Theory & Tables" },
     cases: { ka: "კლინიკური ქეისები (8)", en: "Clinical Cases (8)" },
     quiz: { ka: "თვითშემოწმება (17 კითხვა)", en: "Self-Test (17 Questions)" },
@@ -63,10 +65,17 @@ const uiText = {
   },
   legend: {
     selected: { ka: "არჩეული კვანძი", en: "Selected Node" },
-    ancestor: { ka: "წინამორბედი რგოლი", en: "Ancestor / Upstream" },
+    ancestor: { ka: "წინამორბედი / რეგულატორი", en: "Ancestor / Regulator" },
     descendant: { ka: "შთამომავალი / შედეგი", en: "Descendant / Downstream" },
+    inhibitor: { ka: "წყვეტილი ხაზი = ინჰიბიტორი / ბლოკი", en: "Dashed = Inhibitor / Block" },
   },
 };
+
+function getNodeParents(node: StudyNode): string[] {
+  if (node.parents && node.parents.length > 0) return node.parents;
+  if (node.parent) return [node.parent];
+  return [];
+}
 
 export default function StudyTool() {
   const [activeTab, setActiveTab] = useState<"lineage" | "theory" | "cases" | "quiz">("lineage");
@@ -85,6 +94,7 @@ export default function StudyTool() {
 
   const nodes = currentDiagram.nodes;
 
+  // Traverse multi-parent DAG for ancestors and descendants
   const { ancestors, descendants, activeInfo } = useMemo(() => {
     const ancestorSet = new Set<string>();
     const descendantSet = new Set<string>();
@@ -96,19 +106,29 @@ export default function StudyTool() {
     const nodeMap = new Map<string, StudyNode>();
     nodes.forEach((n) => nodeMap.set(n.id, n));
 
-    let current = nodeMap.get(selectedId);
-    while (current && current.parent) {
-      ancestorSet.add(current.parent);
-      current = nodeMap.get(current.parent);
+    // Walk up all parent chains (BFS)
+    const upQueue: string[] = [selectedId];
+    while (upQueue.length > 0) {
+      const currId = upQueue.shift()!;
+      const currNode = nodeMap.get(currId);
+      if (currNode) {
+        for (const pId of getNodeParents(currNode)) {
+          if (!ancestorSet.has(pId)) {
+            ancestorSet.add(pId);
+            upQueue.push(pId);
+          }
+        }
+      }
     }
 
-    const queue: string[] = [selectedId];
-    while (queue.length > 0) {
-      const currentId = queue.shift()!;
+    // Walk down all child chains (BFS)
+    const downQueue: string[] = [selectedId];
+    while (downQueue.length > 0) {
+      const currId = downQueue.shift()!;
       nodes.forEach((n) => {
-        if (n.parent === currentId && !descendantSet.has(n.id)) {
+        if (getNodeParents(n).includes(currId) && !descendantSet.has(n.id)) {
           descendantSet.add(n.id);
-          queue.push(n.id);
+          downQueue.push(n.id);
         }
       });
     }
@@ -148,25 +168,29 @@ export default function StudyTool() {
   const reviewCount = Object.values(masteredIds).filter((v) => v === "review").length;
 
   return (
-    <div className="min-h-screen bg-slate-50 p-4 md:p-8 flex flex-col">
+    <div className="min-h-screen bg-slate-100 text-slate-900 p-4 md:p-8 flex flex-col">
       <div className="max-w-[1600px] w-full mx-auto flex-1 flex flex-col space-y-6">
-        <header className="bg-white p-4 md:p-6 rounded-xl shadow-sm border border-gray-200 flex flex-col lg:flex-row justify-between items-start lg:items-center gap-4">
+        <header className="bg-white p-4 md:p-6 rounded-xl shadow-sm border border-slate-300 flex flex-col lg:flex-row justify-between items-start lg:items-center gap-4">
           <div>
-            <h1 className="text-xl md:text-2xl font-bold text-gray-900">
+            <h1 className="text-xl md:text-2xl font-bold text-slate-900">
               {uiText.appTitle[lang]}
             </h1>
-            <div className="flex flex-wrap items-center gap-4 mt-2 text-xs text-gray-600">
+            <div className="flex flex-wrap items-center gap-4 mt-2 text-xs font-medium text-slate-700">
               <span className="flex items-center gap-1.5">
                 <span className="w-3 h-3 rounded-full bg-emerald-500 inline-block" />
                 {uiText.legend.selected[lang]}
               </span>
               <span className="flex items-center gap-1.5">
-                <span className="w-3 h-3 rounded-full bg-blue-500 inline-block" />
+                <span className="w-3 h-3 rounded-full bg-blue-600 inline-block" />
                 {uiText.legend.ancestor[lang]}
               </span>
               <span className="flex items-center gap-1.5">
-                <span className="w-3 h-3 rounded-full bg-red-500 inline-block" />
+                <span className="w-3 h-3 rounded-full bg-red-600 inline-block" />
                 {uiText.legend.descendant[lang]}
+              </span>
+              <span className="flex items-center gap-1.5 text-emerald-800 font-semibold">
+                <span>---</span>
+                {uiText.legend.inhibitor[lang]}
               </span>
             </div>
           </div>
@@ -176,10 +200,10 @@ export default function StudyTool() {
               <button
                 key={tab}
                 onClick={() => setActiveTab(tab)}
-                className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
+                className={`px-4 py-2 rounded-lg text-sm font-bold transition-colors ${
                   activeTab === tab
                     ? "bg-blue-600 text-white shadow-sm"
-                    : "bg-gray-100 text-gray-700 hover:bg-gray-200"
+                    : "bg-slate-200 text-slate-800 hover:bg-slate-300"
                 }`}
               >
                 {uiText.tabs[tab][lang]}
@@ -188,7 +212,7 @@ export default function StudyTool() {
 
             <button
               onClick={() => setLang(lang === "ka" ? "en" : "ka")}
-              className="ml-2 px-3 py-2 rounded-lg border border-gray-300 text-xs font-bold uppercase text-gray-700 hover:bg-gray-100"
+              className="ml-2 px-3 py-2 rounded-lg border-2 border-slate-400 text-xs font-bold uppercase text-slate-900 hover:bg-slate-200"
             >
               {lang === "ka" ? "EN" : "ქარ"}
             </button>
@@ -197,7 +221,8 @@ export default function StudyTool() {
 
         {activeTab === "lineage" && (
           <div className="space-y-4 flex-1 flex flex-col">
-            <div className="bg-white p-3 rounded-xl shadow-sm border border-gray-200 flex flex-wrap gap-2 items-center justify-between">
+            {/* Diagram Switcher */}
+            <div className="bg-white p-3 rounded-xl shadow-sm border border-slate-300 flex flex-col gap-2">
               <div className="flex flex-wrap gap-2">
                 {studyDiagrams.map((diag) => (
                   <button
@@ -206,23 +231,23 @@ export default function StudyTool() {
                       setActiveDiagramId(diag.id);
                       setSelectedId(null);
                     }}
-                    className={`px-3.5 py-2 rounded-lg text-xs md:text-sm font-semibold transition-all ${
+                    className={`px-3.5 py-2 rounded-lg text-xs md:text-sm font-bold transition-all ${
                       activeDiagramId === diag.id
                         ? "bg-indigo-600 text-white shadow"
-                        : "bg-gray-100 text-gray-700 hover:bg-gray-200"
+                        : "bg-slate-100 text-slate-800 border border-slate-300 hover:bg-slate-200"
                     }`}
                   >
                     {diag.title[lang]}
                   </button>
                 ))}
               </div>
-              <span className="text-xs text-gray-500 px-2">
+              <div className="text-xs font-medium text-slate-600 px-1">
                 {currentDiagram.subtitle[lang]}
-              </span>
+              </div>
             </div>
 
             <div className="flex flex-col xl:flex-row gap-8 flex-1 items-start">
-              <div className="flex-1 w-full bg-white rounded-xl shadow-xl border border-gray-200 overflow-x-auto custom-scrollbar flex justify-center">
+              <div className="flex-1 w-full bg-white rounded-xl shadow-xl border border-slate-300 overflow-x-auto custom-scrollbar flex justify-center">
                 <div
                   className="relative shrink-0"
                   style={{
@@ -235,65 +260,141 @@ export default function StudyTool() {
                     height={DIAGRAM_HEIGHT}
                     className="absolute inset-0 pointer-events-none z-0"
                   >
-                    {nodes
-                      .filter((n) => n.parent)
-                      .map((node) => {
-                        const parent = nodes.find((p) => p.id === node.parent);
+                    <defs>
+                      <marker
+                        id="arrow-default"
+                        viewBox="0 0 10 10"
+                        refX="8"
+                        refY="5"
+                        markerWidth="6"
+                        markerHeight="6"
+                        orient="auto-start-reverse"
+                      >
+                        <path d="M 0 1 L 10 5 L 0 9 z" fill="#64748b" />
+                      </marker>
+                      <marker
+                        id="arrow-ancestor"
+                        viewBox="0 0 10 10"
+                        refX="8"
+                        refY="5"
+                        markerWidth="6"
+                        markerHeight="6"
+                        orient="auto-start-reverse"
+                      >
+                        <path d="M 0 1 L 10 5 L 0 9 z" fill="#2563eb" />
+                      </marker>
+                      <marker
+                        id="arrow-descendant"
+                        viewBox="0 0 10 10"
+                        refX="8"
+                        refY="5"
+                        markerWidth="6"
+                        markerHeight="6"
+                        orient="auto-start-reverse"
+                      >
+                        <path d="M 0 1 L 10 5 L 0 9 z" fill="#dc2626" />
+                      </marker>
+                      <marker
+                        id="arrow-inhibitor"
+                        viewBox="0 0 10 10"
+                        refX="8"
+                        refY="5"
+                        markerWidth="6"
+                        markerHeight="6"
+                        orient="auto-start-reverse"
+                      >
+                        <path
+                          d="M 8 1 L 8 9 M 0 5 L 8 5"
+                          stroke="#059669"
+                          strokeWidth="2.5"
+                        />
+                      </marker>
+                    </defs>
+
+                    {nodes.flatMap((node) =>
+                      getNodeParents(node).map((parentId) => {
+                        const parent = nodes.find((p) => p.id === parentId);
                         if (!parent) return null;
+
                         const isAncestorPath =
-                          ancestors.has(node.parent!) &&
+                          ancestors.has(parentId) &&
                           (ancestors.has(node.id) || selectedId === node.id);
                         const isDescendantPath =
                           descendants.has(node.id) &&
-                          (descendants.has(node.parent!) ||
-                            selectedId === node.parent);
-                        const startX = (parent.left / 100) * DIAGRAM_WIDTH,
-                          startY = parent.top + 55,
-                          endX = (node.left / 100) * DIAGRAM_WIDTH,
-                          endY = node.top;
-                        let strokeColor = "#e5e7eb",
-                          strokeWidth = 2;
+                          (descendants.has(parentId) || selectedId === parentId);
+
+                        const sameRow = Math.abs(parent.top - node.top) < 35;
+                        const startX = (parent.left / 100) * DIAGRAM_WIDTH;
+                        const startY = sameRow ? parent.top + 32 : parent.top + 62;
+                        const endX = (node.left / 100) * DIAGRAM_WIDTH;
+                        const endY = sameRow ? node.top + 32 : node.top;
+
+                        let strokeColor = parent.isInhibitor ? "#059669" : "#64748b";
+                        let strokeWidth = 2.5;
+                        let marker = parent.isInhibitor
+                          ? "url(#arrow-inhibitor)"
+                          : "url(#arrow-default)";
+
                         if (isAncestorPath) {
-                          strokeColor = "#3b82f6";
+                          strokeColor = "#2563eb";
                           strokeWidth = 4;
+                          marker = "url(#arrow-ancestor)";
                         }
                         if (isDescendantPath) {
-                          strokeColor = "#ef4444";
+                          strokeColor = "#dc2626";
                           strokeWidth = 4;
+                          marker = "url(#arrow-descendant)";
                         }
+
+                        const pathData = sameRow
+                          ? `M ${startX} ${startY} C ${(startX + endX) / 2} ${
+                              startY - 35
+                            }, ${(startX + endX) / 2} ${endY - 35}, ${endX} ${endY}`
+                          : `M ${startX} ${startY} C ${startX} ${
+                              startY + 45
+                            }, ${endX} ${endY - 45}, ${endX} ${endY}`;
+
                         return (
                           <path
                             key={`${parent.id}-${node.id}`}
-                            d={`M ${startX} ${startY} C ${startX} ${
-                              startY + 40
-                            }, ${endX} ${endY - 40}, ${endX} ${endY}`}
+                            d={pathData}
                             fill="none"
                             stroke={strokeColor}
                             strokeWidth={strokeWidth}
+                            strokeDasharray={parent.isInhibitor ? "6,4" : undefined}
+                            markerEnd={marker}
                             className="transition-colors duration-300"
                           />
                         );
-                      })}
+                      })
+                    )}
                   </svg>
+
                   {nodes.map((node) => {
-                    const isSelected = selectedId === node.id,
-                      isAncestor = ancestors.has(node.id),
-                      isDescendant = descendants.has(node.id);
+                    const isSelected = selectedId === node.id;
+                    const isAncestor = ancestors.has(node.id);
+                    const isDescendant = descendants.has(node.id);
+
                     let baseStyles =
-                      "absolute p-2 text-center rounded-lg border-2 cursor-pointer transition-all duration-300 transform -translate-x-1/2 z-10 shadow-sm text-sm";
+                      "absolute p-2.5 text-center rounded-xl border-2 cursor-pointer transition-all duration-300 transform -translate-x-1/2 z-10 shadow-md text-sm text-slate-900";
                     if (isSelected)
                       baseStyles +=
-                        " bg-emerald-50 border-emerald-500 shadow-lg scale-110 z-20";
+                        " bg-emerald-200 border-emerald-600 ring-4 ring-emerald-300 shadow-xl scale-105 z-30";
                     else if (isAncestor)
                       baseStyles +=
-                        " bg-blue-50 border-blue-500 shadow-md scale-105 z-20";
+                        " bg-blue-100 border-blue-600 ring-2 ring-blue-300 shadow-lg scale-105 z-20";
                     else if (isDescendant)
                       baseStyles +=
-                        " bg-red-50 border-red-500 shadow-md scale-105 z-20 text-red-900";
+                        " bg-red-100 border-red-600 ring-2 ring-red-300 shadow-lg scale-105 z-20";
                     else
-                      baseStyles += ` border-gray-200 hover:border-blue-400 hover:shadow-md ${
-                        node.bgClass || "bg-white"
-                      }`;
+                      baseStyles += ` ${
+                        node.bgClass || "bg-white border-slate-400"
+                      } hover:border-blue-600 hover:shadow-lg`;
+
+                    if (node.isInhibitor && !isSelected) {
+                      baseStyles += " border-dashed";
+                    }
+
                     return (
                       <div
                         key={node.id}
@@ -308,9 +409,11 @@ export default function StudyTool() {
                           left: `${(node.left / 100) * DIAGRAM_WIDTH}px`,
                         }}
                       >
-                        <div className="font-bold">{node.label[lang]}</div>
+                        <div className="font-bold text-slate-900 leading-tight">
+                          {node.label[lang]}
+                        </div>
                         {node.subtitle && (
-                          <div className="text-xs font-normal text-gray-500 mt-1">
+                          <div className="text-xs font-medium text-slate-700 mt-1 leading-snug">
                             {node.subtitle[lang]}
                           </div>
                         )}
@@ -321,38 +424,38 @@ export default function StudyTool() {
               </div>
 
               <div className="w-full xl:w-[450px] shrink-0">
-                <div className="sticky top-8 bg-white p-6 rounded-xl shadow-xl border border-gray-200 min-h-[500px]">
-                  <h2 className="text-2xl font-bold mb-6 text-gray-800 border-b pb-4">
+                <div className="sticky top-8 bg-white p-6 rounded-xl shadow-xl border border-slate-300 min-h-[500px] text-slate-900">
+                  <h2 className="text-xl md:text-2xl font-bold mb-6 text-slate-900 border-b border-slate-200 pb-4">
                     {activeInfo
                       ? activeInfo.name[lang]
                       : uiText.selectCell[lang]}
                   </h2>
                   {activeInfo ? (
-                    <div className="space-y-6 animate-fadeIn">
+                    <div className="space-y-6">
                       <div>
-                        <h3 className="font-semibold text-xl text-gray-800 mb-2">
+                        <h3 className="font-bold text-lg text-slate-900 mb-2">
                           {uiText.roleHeader[lang]}
                         </h3>
-                        <p className="text-gray-700 bg-blue-50 p-4 rounded-lg border border-blue-100 leading-relaxed">
+                        <p className="text-slate-800 bg-blue-50 p-4 rounded-lg border border-blue-200 leading-relaxed text-sm">
                           {activeInfo.function[lang]}
                         </p>
                       </div>
                       {activeInfo.diseases &&
                         activeInfo.diseases.length > 0 && (
                           <div>
-                            <h3 className="font-semibold text-xl text-red-700 mb-4">
+                            <h3 className="font-bold text-lg text-red-700 mb-3">
                               {uiText.pathoHeader[lang]}
                             </h3>
-                            <div className="space-y-4">
+                            <div className="space-y-3">
                               {activeInfo.diseases.map((disease, i) => (
                                 <div
                                   key={i}
-                                  className="bg-red-50 p-4 rounded-lg border-l-4 border-red-500"
+                                  className="bg-red-50 p-4 rounded-lg border-l-4 border-red-600"
                                 >
-                                  <h4 className="font-bold text-red-900">
+                                  <h4 className="font-bold text-red-950 text-sm">
                                     {disease.name[lang]}
                                   </h4>
-                                  <p className="text-sm text-red-800 mt-2 leading-relaxed">
+                                  <p className="text-xs md:text-sm text-red-900 mt-1.5 leading-relaxed">
                                     {disease.findings[lang]}
                                   </p>
                                 </div>
@@ -362,8 +465,8 @@ export default function StudyTool() {
                         )}
                     </div>
                   ) : (
-                    <div className="text-center text-gray-500 mt-20">
-                      <p className="text-lg leading-relaxed">
+                    <div className="text-center text-slate-600 mt-20">
+                      <p className="text-base leading-relaxed font-medium">
                         {uiText.placeholder[lang]}
                       </p>
                     </div>
@@ -376,8 +479,8 @@ export default function StudyTool() {
 
         {activeTab === "theory" && (
           <div className="space-y-8">
-            <div className="bg-white p-4 rounded-xl shadow-sm border border-gray-200 flex flex-wrap items-center justify-between gap-4">
-              <span className="font-semibold text-gray-800">
+            <div className="bg-white p-4 rounded-xl shadow-sm border border-slate-300 flex flex-wrap items-center justify-between gap-4">
+              <span className="font-bold text-slate-900">
                 {lang === "ka"
                   ? "აირჩიეთ ჰენდაუთის თავი:"
                   : "Filter by Handout Chapter:"}
@@ -391,10 +494,10 @@ export default function StudyTool() {
                   <button
                     key={btn.id}
                     onClick={() => setChapterFilter(btn.id as "all" | "16.1" | "16.2")}
-                    className={`px-3.5 py-1.5 rounded-lg text-xs font-semibold transition ${
+                    className={`px-3.5 py-1.5 rounded-lg text-xs font-bold transition ${
                       chapterFilter === btn.id
                         ? "bg-blue-600 text-white"
-                        : "bg-gray-100 text-gray-700 hover:bg-gray-200"
+                        : "bg-slate-200 text-slate-800 hover:bg-slate-300"
                     }`}
                   >
                     {btn.label[lang]}
@@ -407,25 +510,25 @@ export default function StudyTool() {
               {filteredPearls.map((pearl) => (
                 <div
                   key={pearl.id}
-                  className="bg-white rounded-xl shadow-md border border-gray-200 p-6 flex flex-col justify-between"
+                  className="bg-white rounded-xl shadow-md border border-slate-300 p-6 flex flex-col justify-between"
                 >
                   <div>
                     <div className="flex items-center justify-between gap-2 mb-3">
-                      <span className="px-2.5 py-1 rounded-full text-xs font-bold bg-indigo-50 text-indigo-700 border border-indigo-200">
+                      <span className="px-2.5 py-1 rounded-full text-xs font-bold bg-indigo-100 text-indigo-800 border border-indigo-300">
                         {pearl.badge[lang]}
                       </span>
-                      <span className="text-xs font-semibold text-gray-400">
+                      <span className="text-xs font-bold text-slate-600">
                         {lang === "ka" ? `თავი ${pearl.chapter}` : `Ch. ${pearl.chapter}`}
                       </span>
                     </div>
-                    <h3 className="text-lg font-bold text-gray-900 mb-4">
+                    <h3 className="text-lg font-bold text-slate-900 mb-4">
                       {pearl.title[lang]}
                     </h3>
                     <ul className="space-y-3">
                       {pearl.points[lang].map((pt, idx) => (
                         <li
                           key={idx}
-                          className="text-sm text-gray-700 bg-slate-50 p-3 rounded-lg border-l-4 border-indigo-500 leading-relaxed"
+                          className="text-sm text-slate-800 bg-slate-50 p-3 rounded-lg border-l-4 border-indigo-600 leading-relaxed"
                         >
                           {pt}
                         </li>
@@ -440,43 +543,43 @@ export default function StudyTool() {
               {filteredTables.map((table) => (
                 <div
                   key={table.id}
-                  className="bg-white rounded-xl shadow-md border border-gray-200 overflow-hidden"
+                  className="bg-white rounded-xl shadow-md border border-slate-300 overflow-hidden"
                 >
-                  <div className="bg-gray-800 text-white px-6 py-4 flex items-center justify-between">
+                  <div className="bg-slate-800 text-white px-6 py-4 flex items-center justify-between">
                     <h3 className="font-bold text-base md:text-lg">
                       {table.title[lang]}
                     </h3>
-                    <span className="text-xs bg-gray-700 px-2.5 py-1 rounded">
+                    <span className="text-xs bg-slate-700 px-2.5 py-1 rounded font-bold">
                       {table.chapter}
                     </span>
                   </div>
                   <div className="overflow-x-auto">
                     <table className="w-full text-left border-collapse text-sm">
                       <thead>
-                        <tr className="bg-gray-100 border-b border-gray-200">
+                        <tr className="bg-slate-100 border-b border-slate-300">
                           {table.headers[lang].map((h, i) => (
                             <th
                               key={i}
-                              className="py-3 px-4 font-bold text-gray-800"
+                              className="py-3 px-4 font-bold text-slate-900"
                             >
                               {h}
                             </th>
                           ))}
                         </tr>
                       </thead>
-                      <tbody className="divide-y divide-gray-200">
+                      <tbody className="divide-y divide-slate-200">
                         {table.rows[lang].map((row, rIdx) => (
                           <tr
                             key={rIdx}
-                            className="hover:bg-blue-50/40 transition-colors"
+                            className="hover:bg-blue-50/60 transition-colors"
                           >
                             {row.map((cell, cIdx) => (
                               <td
                                 key={cIdx}
                                 className={`py-3 px-4 align-top leading-relaxed ${
                                   cIdx === 0
-                                    ? "font-semibold text-gray-900 whitespace-nowrap"
-                                    : "text-gray-700"
+                                    ? "font-bold text-slate-900 whitespace-nowrap"
+                                    : "text-slate-800"
                                 }`}
                               >
                                 {cell}
@@ -497,17 +600,17 @@ export default function StudyTool() {
 
         {activeTab === "quiz" && (
           <div className="space-y-6">
-            <div className="bg-white p-4 md:p-6 rounded-xl shadow-sm border border-gray-200 flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+            <div className="bg-white p-4 md:p-6 rounded-xl shadow-sm border border-slate-300 flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
               <div className="flex flex-wrap items-center gap-4">
-                <div className="px-4 py-2 rounded-lg bg-emerald-50 border border-emerald-200 text-emerald-800 text-sm font-bold">
+                <div className="px-4 py-2 rounded-lg bg-emerald-100 border border-emerald-300 text-emerald-900 text-sm font-bold">
                   {lang === "ka" ? `ვიცი: ${knownCount}` : `Mastered: ${knownCount}`}
                 </div>
-                <div className="px-4 py-2 rounded-lg bg-amber-50 border border-amber-200 text-amber-800 text-sm font-bold">
+                <div className="px-4 py-2 rounded-lg bg-amber-100 border border-amber-300 text-amber-900 text-sm font-bold">
                   {lang === "ka"
                     ? `გასამეორებელია: ${reviewCount}`
                     : `Needs Review: ${reviewCount}`}
                 </div>
-                <div className="text-xs text-gray-500">
+                <div className="text-xs font-bold text-slate-600">
                   {lang === "ka"
                     ? `სულ: ${filteredQuiz.length} კითხვა`
                     : `Total: ${filteredQuiz.length} questions`}
@@ -519,10 +622,10 @@ export default function StudyTool() {
                   <button
                     key={ch}
                     onClick={() => setChapterFilter(ch)}
-                    className={`px-3 py-1.5 rounded-lg text-xs font-semibold ${
+                    className={`px-3 py-1.5 rounded-lg text-xs font-bold ${
                       chapterFilter === ch
                         ? "bg-blue-600 text-white"
-                        : "bg-gray-100 text-gray-700 hover:bg-gray-200"
+                        : "bg-slate-200 text-slate-800 hover:bg-slate-300"
                     }`}
                   >
                     {ch === "all"
@@ -547,17 +650,17 @@ export default function StudyTool() {
                     key={q.id}
                     className={`bg-white rounded-xl shadow-sm border-2 p-6 transition-all ${
                       status === "known"
-                        ? "border-emerald-400"
+                        ? "border-emerald-500"
                         : status === "review"
-                        ? "border-amber-400"
-                        : "border-gray-200"
+                        ? "border-amber-500"
+                        : "border-slate-300"
                     }`}
                   >
                     <div className="flex items-start justify-between gap-4">
-                      <h3 className="text-base md:text-lg font-bold text-gray-900 leading-snug">
+                      <h3 className="text-base md:text-lg font-bold text-slate-900 leading-snug">
                         {q.question[lang]}
                       </h3>
-                      <span className="shrink-0 px-2.5 py-1 rounded text-xs font-bold bg-gray-100 text-gray-700">
+                      <span className="shrink-0 px-2.5 py-1 rounded text-xs font-bold bg-slate-200 text-slate-800">
                         {q.chapter}
                       </span>
                     </div>
@@ -566,14 +669,14 @@ export default function StudyTool() {
                       {q.keyTerms.map((term, i) => (
                         <span
                           key={i}
-                          className="px-2 py-0.5 rounded text-xs bg-blue-50 text-blue-700 border border-blue-200 font-medium"
+                          className="px-2 py-0.5 rounded text-xs bg-blue-100 text-blue-900 border border-blue-300 font-semibold"
                         >
                           {term}
                         </span>
                       ))}
                     </div>
 
-                    <div className="mt-4 flex flex-wrap items-center justify-between gap-3 pt-3 border-t border-gray-100">
+                    <div className="mt-4 flex flex-wrap items-center justify-between gap-3 pt-3 border-t border-slate-200">
                       <button
                         onClick={() =>
                           setRevealedAnswers((prev) => ({
@@ -581,7 +684,7 @@ export default function StudyTool() {
                             [q.id]: !prev[q.id],
                           }))
                         }
-                        className="px-4 py-2 rounded-lg text-xs md:text-sm font-semibold bg-indigo-600 text-white hover:bg-indigo-700 transition"
+                        className="px-4 py-2 rounded-lg text-xs md:text-sm font-bold bg-indigo-600 text-white hover:bg-indigo-700 transition"
                       >
                         {isRevealed
                           ? lang === "ka"
@@ -603,7 +706,7 @@ export default function StudyTool() {
                           className={`px-3 py-1.5 rounded-lg text-xs font-bold border transition ${
                             status === "known"
                               ? "bg-emerald-600 text-white border-emerald-600"
-                              : "bg-emerald-50 text-emerald-800 border-emerald-200 hover:bg-emerald-100"
+                              : "bg-emerald-50 text-emerald-900 border-emerald-300 hover:bg-emerald-100"
                           }`}
                         >
                           {lang === "ka" ? "✓ ვიცი" : "✓ Got It"}
@@ -618,7 +721,7 @@ export default function StudyTool() {
                           className={`px-3 py-1.5 rounded-lg text-xs font-bold border transition ${
                             status === "review"
                               ? "bg-amber-500 text-white border-amber-500"
-                              : "bg-amber-50 text-amber-800 border-amber-200 hover:bg-amber-100"
+                              : "bg-amber-50 text-amber-900 border-amber-300 hover:bg-amber-100"
                           }`}
                         >
                           {lang === "ka" ? "↻ გასამეორებელია" : "↻ Review"}
@@ -627,7 +730,7 @@ export default function StudyTool() {
                     </div>
 
                     {isRevealed && (
-                      <div className="mt-4 p-4 rounded-lg bg-emerald-50/70 border border-emerald-200 text-gray-800 text-sm whitespace-pre-line leading-relaxed">
+                      <div className="mt-4 p-4 rounded-lg bg-emerald-50 border border-emerald-300 text-slate-900 text-sm whitespace-pre-line leading-relaxed font-medium">
                         {q.answer[lang]}
                       </div>
                     )}
