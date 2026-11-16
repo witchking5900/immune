@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useMemo } from "react";
+import React, { useState, useMemo, useEffect } from "react";
 import { studyDiagrams } from "../data/lineageData";
 import {
   clinicalPearls,
@@ -8,6 +8,7 @@ import {
   quizQuestions,
 } from "../data/theoryAndQuizData";
 import ClinicalCasesView from "./ClinicalCasesView";
+import InteractiveModulesView from "./InteractiveModulesView";
 
 export type Lang = "ka" | "en";
 
@@ -42,10 +43,11 @@ const uiText = {
     en: "Pathophysiology Interactive Study Platform (Ch. 16.1 & 16.2)",
   },
   tabs: {
-    lineage: { ka: "ინტერაქტიული დიაგრამები (5)", en: "Interactive Diagrams (5)" },
+    lineage: { ka: "დიაგრამები (5)", en: "Diagrams (5)" },
+    modules: { ka: "ლაბ-სიმულატორი & ბარათები", en: "Lab Simulator & Flashcards" },
     theory: { ka: "თეორია და ცხრილები", en: "Theory & Tables" },
     cases: { ka: "კლინიკური ქეისები (8)", en: "Clinical Cases (8)" },
-    quiz: { ka: "თვითშემოწმება (17 კითხვა)", en: "Self-Test (17 Questions)" },
+    quiz: { ka: "თვითშემოწმება (17)", en: "Self-Test (17)" },
   },
   selectCell: {
     ka: "აირჩიეთ ელემენტი დიაგრამაზე",
@@ -78,35 +80,78 @@ function getNodeParents(node: StudyNode): string[] {
 }
 
 export default function StudyTool() {
-  const [activeTab, setActiveTab] = useState<"lineage" | "theory" | "cases" | "quiz">("lineage");
-  const [activeDiagramId, setActiveDiagramId] = useState<string>(studyDiagrams[0].id);
+  const [activeTab, setActiveTab] = useState<
+    "lineage" | "modules" | "theory" | "cases" | "quiz"
+  >("lineage");
+  const [activeDiagramId, setActiveDiagramId] = useState<string>(
+    studyDiagrams[0].id
+  );
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [lang, setLang] = useState<Lang>("ka");
 
-  const [chapterFilter, setChapterFilter] = useState<"all" | "16.1" | "16.2">("all");
-  const [revealedAnswers, setRevealedAnswers] = useState<Record<number, boolean>>({});
-  const [masteredIds, setMasteredIds] = useState<Record<number, "known" | "review">>({});
+  // Blind Recall Mode for Diagrams
+  const [blindMode, setBlindMode] = useState<
+    "off" | "subtitles" | "labels"
+  >("off");
+
+  const [chapterFilter, setChapterFilter] = useState<"all" | "16.1" | "16.2">(
+    "all"
+  );
+  const [quizStatusFilter, setQuizStatusFilter] = useState<"all" | "review">(
+    "all"
+  );
+  const [revealedAnswers, setRevealedAnswers] = useState<
+    Record<number, boolean>
+  >({});
+  const [masteredIds, setMasteredIds] = useState<
+    Record<number, "known" | "review">
+  >({});
+
+  // Load saved quiz ratings from localStorage
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem("patho_quiz_mastery");
+      if (saved) setMasteredIds(JSON.parse(saved));
+    } catch {
+      // ignore
+    }
+  }, []);
+
+  const updateQuizMastery = (id: number, status: "known" | "review") => {
+    setMasteredIds((prev) => {
+      const updated = { ...prev, [id]: status };
+      try {
+        localStorage.setItem("patho_quiz_mastery", JSON.stringify(updated));
+      } catch {
+        // ignore
+      }
+      return updated;
+    });
+  };
 
   const currentDiagram = useMemo(
-    () => studyDiagrams.find((d) => d.id === activeDiagramId) || studyDiagrams[0],
+    () =>
+      studyDiagrams.find((d) => d.id === activeDiagramId) || studyDiagrams[0],
     [activeDiagramId]
   );
 
   const nodes = currentDiagram.nodes;
 
-  // Traverse multi-parent DAG for ancestors and descendants
   const { ancestors, descendants, activeInfo } = useMemo(() => {
     const ancestorSet = new Set<string>();
     const descendantSet = new Set<string>();
 
     if (!selectedId) {
-      return { ancestors: ancestorSet, descendants: descendantSet, activeInfo: null };
+      return {
+        ancestors: ancestorSet,
+        descendants: descendantSet,
+        activeInfo: null,
+      };
     }
 
     const nodeMap = new Map<string, StudyNode>();
     nodes.forEach((n) => nodeMap.set(n.id, n));
 
-    // Walk up all parent chains (BFS)
     const upQueue: string[] = [selectedId];
     while (upQueue.length > 0) {
       const currId = upQueue.shift()!;
@@ -121,7 +166,6 @@ export default function StudyTool() {
       }
     }
 
-    // Walk down all child chains (BFS)
     const downQueue: string[] = [selectedId];
     while (downQueue.length > 0) {
       const currId = downQueue.shift()!;
@@ -156,16 +200,22 @@ export default function StudyTool() {
     [chapterFilter]
   );
 
-  const filteredQuiz = useMemo(
-    () =>
-      chapterFilter === "all"
-        ? quizQuestions
-        : quizQuestions.filter((q) => q.chapter === chapterFilter),
-    [chapterFilter]
-  );
+  const filteredQuiz = useMemo(() => {
+    return quizQuestions.filter((q) => {
+      const matchesChapter =
+        chapterFilter === "all" || q.chapter === chapterFilter;
+      const matchesStatus =
+        quizStatusFilter === "all" || masteredIds[q.id] === "review";
+      return matchesChapter && matchesStatus;
+    });
+  }, [chapterFilter, quizStatusFilter, masteredIds]);
 
-  const knownCount = Object.values(masteredIds).filter((v) => v === "known").length;
-  const reviewCount = Object.values(masteredIds).filter((v) => v === "review").length;
+  const knownCount = Object.values(masteredIds).filter(
+    (v) => v === "known"
+  ).length;
+  const reviewCount = Object.values(masteredIds).filter(
+    (v) => v === "review"
+  ).length;
 
   return (
     <div className="min-h-screen bg-slate-100 text-slate-900 p-4 md:p-8 flex flex-col">
@@ -196,11 +246,13 @@ export default function StudyTool() {
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
-            {(["lineage", "theory", "cases", "quiz"] as const).map((tab) => (
+            {(
+              ["lineage", "modules", "theory", "cases", "quiz"] as const
+            ).map((tab) => (
               <button
                 key={tab}
                 onClick={() => setActiveTab(tab)}
-                className={`px-4 py-2 rounded-lg text-sm font-bold transition-colors ${
+                className={`px-3.5 py-2 rounded-lg text-xs md:text-sm font-bold transition-colors ${
                   activeTab === tab
                     ? "bg-blue-600 text-white shadow-sm"
                     : "bg-slate-200 text-slate-800 hover:bg-slate-300"
@@ -212,7 +264,7 @@ export default function StudyTool() {
 
             <button
               onClick={() => setLang(lang === "ka" ? "en" : "ka")}
-              className="ml-2 px-3 py-2 rounded-lg border-2 border-slate-400 text-xs font-bold uppercase text-slate-900 hover:bg-slate-200"
+              className="ml-1 px-3 py-2 rounded-lg border-2 border-slate-400 text-xs font-bold uppercase text-slate-900 hover:bg-slate-200"
             >
               {lang === "ka" ? "EN" : "ქარ"}
             </button>
@@ -221,8 +273,8 @@ export default function StudyTool() {
 
         {activeTab === "lineage" && (
           <div className="space-y-4 flex-1 flex flex-col">
-            {/* Diagram Switcher */}
-            <div className="bg-white p-3 rounded-xl shadow-sm border border-slate-300 flex flex-col gap-2">
+            {/* Diagram Switcher + Blind Recall Mode Controls */}
+            <div className="bg-white p-3.5 rounded-xl shadow-sm border border-slate-300 flex flex-col gap-3">
               <div className="flex flex-wrap gap-2">
                 {studyDiagrams.map((diag) => (
                   <button
@@ -241,8 +293,46 @@ export default function StudyTool() {
                   </button>
                 ))}
               </div>
-              <div className="text-xs font-medium text-slate-600 px-1">
-                {currentDiagram.subtitle[lang]}
+
+              <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-slate-200">
+                <span className="text-xs font-medium text-slate-600">
+                  {currentDiagram.subtitle[lang]}
+                </span>
+
+                {/* Blind Recall Mode Toggle */}
+                <div className="flex items-center gap-1.5">
+                  <span className="text-xs font-bold text-slate-700 mr-1">
+                    {lang === "ka" ? "ბრმა გახსენების რეჟიმი:" : "Blind Recall:"}
+                  </span>
+                  {(
+                    [
+                      {
+                        id: "off",
+                        label: { ka: "გამორთული", en: "Off" },
+                      },
+                      {
+                        id: "subtitles",
+                        label: { ka: "დამალე მექანიზმები", en: "Blur Subtitles" },
+                      },
+                      {
+                        id: "labels",
+                        label: { ka: "დამალე ყველაფერი", en: "Blur All Unselected" },
+                      },
+                    ] as const
+                  ).map((mode) => (
+                    <button
+                      key={mode.id}
+                      onClick={() => setBlindMode(mode.id)}
+                      className={`px-2.5 py-1 rounded text-xs font-bold transition ${
+                        blindMode === mode.id
+                          ? "bg-amber-500 text-white"
+                          : "bg-slate-100 text-slate-700 border border-slate-300 hover:bg-slate-200"
+                      }`}
+                    >
+                      {mode.label[lang]}
+                    </button>
+                  ))}
+                </div>
               </div>
             </div>
 
@@ -321,15 +411,20 @@ export default function StudyTool() {
                           (ancestors.has(node.id) || selectedId === node.id);
                         const isDescendantPath =
                           descendants.has(node.id) &&
-                          (descendants.has(parentId) || selectedId === parentId);
+                          (descendants.has(parentId) ||
+                            selectedId === parentId);
 
                         const sameRow = Math.abs(parent.top - node.top) < 35;
                         const startX = (parent.left / 100) * DIAGRAM_WIDTH;
-                        const startY = sameRow ? parent.top + 32 : parent.top + 62;
+                        const startY = sameRow
+                          ? parent.top + 32
+                          : parent.top + 62;
                         const endX = (node.left / 100) * DIAGRAM_WIDTH;
                         const endY = sameRow ? node.top + 32 : node.top;
 
-                        let strokeColor = parent.isInhibitor ? "#059669" : "#64748b";
+                        let strokeColor = parent.isInhibitor
+                          ? "#059669"
+                          : "#64748b";
                         let strokeWidth = 2.5;
                         let marker = parent.isInhibitor
                           ? "url(#arrow-inhibitor)"
@@ -349,7 +444,9 @@ export default function StudyTool() {
                         const pathData = sameRow
                           ? `M ${startX} ${startY} C ${(startX + endX) / 2} ${
                               startY - 35
-                            }, ${(startX + endX) / 2} ${endY - 35}, ${endX} ${endY}`
+                            }, ${(startX + endX) / 2} ${
+                              endY - 35
+                            }, ${endX} ${endY}`
                           : `M ${startX} ${startY} C ${startX} ${
                               startY + 45
                             }, ${endX} ${endY - 45}, ${endX} ${endY}`;
@@ -361,7 +458,9 @@ export default function StudyTool() {
                             fill="none"
                             stroke={strokeColor}
                             strokeWidth={strokeWidth}
-                            strokeDasharray={parent.isInhibitor ? "6,4" : undefined}
+                            strokeDasharray={
+                              parent.isInhibitor ? "6,4" : undefined
+                            }
                             markerEnd={marker}
                             className="transition-colors duration-300"
                           />
@@ -374,6 +473,12 @@ export default function StudyTool() {
                     const isSelected = selectedId === node.id;
                     const isAncestor = ancestors.has(node.id);
                     const isDescendant = descendants.has(node.id);
+
+                    const blurLabel =
+                      blindMode === "labels" && !isSelected;
+                    const blurSubtitle =
+                      (blindMode === "subtitles" || blindMode === "labels") &&
+                      !isSelected;
 
                     let baseStyles =
                       "absolute p-2.5 text-center rounded-xl border-2 cursor-pointer transition-all duration-300 transform -translate-x-1/2 z-10 shadow-md text-sm text-slate-900";
@@ -409,11 +514,19 @@ export default function StudyTool() {
                           left: `${(node.left / 100) * DIAGRAM_WIDTH}px`,
                         }}
                       >
-                        <div className="font-bold text-slate-900 leading-tight">
+                        <div
+                          className={`font-bold text-slate-900 leading-tight transition-all ${
+                            blurLabel ? "blur-sm select-none" : ""
+                          }`}
+                        >
                           {node.label[lang]}
                         </div>
                         {node.subtitle && (
-                          <div className="text-xs font-medium text-slate-700 mt-1 leading-snug">
+                          <div
+                            className={`text-xs font-medium text-slate-700 mt-1 leading-snug transition-all ${
+                              blurSubtitle ? "blur-sm select-none" : ""
+                            }`}
+                          >
                             {node.subtitle[lang]}
                           </div>
                         )}
@@ -477,6 +590,8 @@ export default function StudyTool() {
           </div>
         )}
 
+        {activeTab === "modules" && <InteractiveModulesView lang={lang} />}
+
         {activeTab === "theory" && (
           <div className="space-y-8">
             <div className="bg-white p-4 rounded-xl shadow-sm border border-slate-300 flex flex-wrap items-center justify-between gap-4">
@@ -487,13 +602,30 @@ export default function StudyTool() {
               </span>
               <div className="flex gap-2">
                 {[
-                  { id: "all", label: { ka: "ყველა (16.1 + 16.2)", en: "All (16.1 + 16.2)" } },
-                  { id: "16.1", label: { ka: "16.1 ბიოლოგიური ფაქტორები", en: "16.1 Biological Factors" } },
-                  { id: "16.2", label: { ka: "16.2 იმუნური სისტემა & IEI", en: "16.2 Immune System & IEI" } },
+                  {
+                    id: "all",
+                    label: { ka: "ყველა (16.1 + 16.2)", en: "All (16.1 + 16.2)" },
+                  },
+                  {
+                    id: "16.1",
+                    label: {
+                      ka: "16.1 ბიოლოგიური ფაქტორები",
+                      en: "16.1 Biological Factors",
+                    },
+                  },
+                  {
+                    id: "16.2",
+                    label: {
+                      ka: "16.2 იმუნური სისტემა & IEI",
+                      en: "16.2 Immune System & IEI",
+                    },
+                  },
                 ].map((btn) => (
                   <button
                     key={btn.id}
-                    onClick={() => setChapterFilter(btn.id as "all" | "16.1" | "16.2")}
+                    onClick={() =>
+                      setChapterFilter(btn.id as "all" | "16.1" | "16.2")
+                    }
                     className={`px-3.5 py-1.5 rounded-lg text-xs font-bold transition ${
                       chapterFilter === btn.id
                         ? "bg-blue-600 text-white"
@@ -518,7 +650,9 @@ export default function StudyTool() {
                         {pearl.badge[lang]}
                       </span>
                       <span className="text-xs font-bold text-slate-600">
-                        {lang === "ka" ? `თავი ${pearl.chapter}` : `Ch. ${pearl.chapter}`}
+                        {lang === "ka"
+                          ? `თავი ${pearl.chapter}`
+                          : `Ch. ${pearl.chapter}`}
                       </span>
                     </div>
                     <h3 className="text-lg font-bold text-slate-900 mb-4">
@@ -601,19 +735,32 @@ export default function StudyTool() {
         {activeTab === "quiz" && (
           <div className="space-y-6">
             <div className="bg-white p-4 md:p-6 rounded-xl shadow-sm border border-slate-300 flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
-              <div className="flex flex-wrap items-center gap-4">
+              <div className="flex flex-wrap items-center gap-3">
                 <div className="px-4 py-2 rounded-lg bg-emerald-100 border border-emerald-300 text-emerald-900 text-sm font-bold">
-                  {lang === "ka" ? `ვიცი: ${knownCount}` : `Mastered: ${knownCount}`}
-                </div>
-                <div className="px-4 py-2 rounded-lg bg-amber-100 border border-amber-300 text-amber-900 text-sm font-bold">
                   {lang === "ka"
-                    ? `გასამეორებელია: ${reviewCount}`
-                    : `Needs Review: ${reviewCount}`}
+                    ? `ვიცი: ${knownCount}`
+                    : `Mastered: ${knownCount}`}
                 </div>
+                <button
+                  onClick={() =>
+                    setQuizStatusFilter((prev) =>
+                      prev === "review" ? "all" : "review"
+                    )
+                  }
+                  className={`px-4 py-2 rounded-lg border text-sm font-bold transition ${
+                    quizStatusFilter === "review"
+                      ? "bg-amber-500 text-white border-amber-600"
+                      : "bg-amber-100 border-amber-300 text-amber-900 hover:bg-amber-200"
+                  }`}
+                >
+                  {lang === "ka"
+                    ? `გასამეორებელია: ${reviewCount} (ფილტრი)`
+                    : `Needs Review: ${reviewCount} (Filter)`}
+                </button>
                 <div className="text-xs font-bold text-slate-600">
                   {lang === "ka"
-                    ? `სულ: ${filteredQuiz.length} კითხვა`
-                    : `Total: ${filteredQuiz.length} questions`}
+                    ? `ნაჩვენებია: ${filteredQuiz.length} კითხვა`
+                    : `Showing: ${filteredQuiz.length} questions`}
                 </div>
               </div>
 
@@ -697,12 +844,7 @@ export default function StudyTool() {
 
                       <div className="flex gap-2">
                         <button
-                          onClick={() =>
-                            setMasteredIds((prev) => ({
-                              ...prev,
-                              [q.id]: "known",
-                            }))
-                          }
+                          onClick={() => updateQuizMastery(q.id, "known")}
                           className={`px-3 py-1.5 rounded-lg text-xs font-bold border transition ${
                             status === "known"
                               ? "bg-emerald-600 text-white border-emerald-600"
@@ -712,12 +854,7 @@ export default function StudyTool() {
                           {lang === "ka" ? "✓ ვიცი" : "✓ Got It"}
                         </button>
                         <button
-                          onClick={() =>
-                            setMasteredIds((prev) => ({
-                              ...prev,
-                              [q.id]: "review",
-                            }))
-                          }
+                          onClick={() => updateQuizMastery(q.id, "review")}
                           className={`px-3 py-1.5 rounded-lg text-xs font-bold border transition ${
                             status === "review"
                               ? "bg-amber-500 text-white border-amber-500"
